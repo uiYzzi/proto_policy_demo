@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package service.policy;
+
+option go_package = "proto_policy_demo/gen/service/policy";
+
+// Permission 定义鉴权策略
+// 指定访问某个 RPC 方法所需的权限
+message Permission {
+  // 必需的权限标识符
+  // 例如：
+  //   - "user:write": 用户写权限
+  //   - "user:read": 用户读权限
+  //   - "admin:*": 管理员全部权限
+  string required = 1;
+
+  // 可选：权限描述
+  string description = 2;
+}

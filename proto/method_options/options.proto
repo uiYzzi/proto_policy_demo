@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package method_options;
+
+import "google/protobuf/descriptor.proto";
+import "google/protobuf/any.proto";
+
+option go_package = "proto_policy_demo/gen/method_options";
+
+// 定义通用的策略消息
+// MethodPolicy 允许在单个 RPC 方法上挂载多个不同类型的策略配置
+// 例如：鉴权（Authentication）、限流（Rate Limiting）、审计（Auditing）、灰度发布等
+message MethodPolicy {
+  // 核心：允许挂载多个不同的策略配置
+  // 每个 rule 可以是不同类型的策略消息（通过 google.protobuf.Any 实现）
+  // 比如：
+  //   - service.policy.Permission: 鉴权策略
+  //   - service.policy.RateLimit: 限流策略
+  //   - service.policy.AuditConfig: 审计策略
+  //   - service.policy.GrayConfig: 灰度发布配置
+  repeated google.protobuf.Any rules = 1;
+}
+
+// 扩展方法选项
+// 允许在 RPC 方法上使用 option (method_options.policy) = {...}
+extend google.protobuf.MethodOptions {
+  MethodPolicy policy = 50001; // 自定义扩展号
+}

@@ -1,0 +1,22 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: proto_policy_demo/gen
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: gen
+    opt:
+      - paths=source_relative
+  - remote: buf.build/connectrpc/go
+    out: gen
+    opt:
+      - paths=source_relative
+  - local:
+      - go
+      - run
+      - ./tools/protoc-gen-policy-map
+    out: gen
+    opt:
+      - paths=source_relative

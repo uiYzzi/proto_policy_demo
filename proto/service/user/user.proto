@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package service.user;
+
+import "method_options/options.proto";
+import "service/policy/permission.proto";
+import "service/policy/rate_limit.proto";
+
+option go_package = "proto_policy_demo/gen/service/user";
+
+// User message definition
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+// CreateUser request
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+}
+
+// CreateUser response
+message CreateUserResponse {
+  User user = 1;
+}
+
+// GetUser request
+message GetUserRequest {
+  string id = 1;
+}
+
+// GetUser response
+message GetUserResponse {
+  User user = 1;
+}
+
+// UserService provides user management operations
+service UserService {
+  // CreateUser creates a new user (requires user:write permission and rate limit of 100 QPS)
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (method_options.policy) = {
+      rules: [
+        {
+          [type.googleapis.com/service.policy.Permission]: {
+            required: "user:write"
+            description: "Requires write permission to create users"
+          }
+        },
+        {
+          [type.googleapis.com/service.policy.RateLimit]: {
+            qps: 100
+            burst: 150
+            description: "Rate limit to prevent abuse"
+          }
+        }
+      ]
+    };
+  }
+
+  // GetUser retrieves user information (requires user:read permission)
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (method_options.policy) = {
+      rules: [
+        {
+          [type.googleapis.com/service.policy.Permission]: {
+            required: "user:read"
+            description: "Requires read permission to view user data"
+          }
+        },
+        {
+          [type.googleapis.com/service.policy.RateLimit]: {
+            qps: 500
+            burst: 1000
+            description: "Higher rate limit for read operations"
+          }
+        }
+      ]
+    };
+  }
+}

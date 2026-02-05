@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package service.policy;
+
+option go_package = "proto_policy_demo/gen/service/policy";
+
+// RateLimit 定义限流策略
+// 指定某个 RPC 方法的流量限制
+message RateLimit {
+  // 每秒查询数（Queries Per Second）限制
+  // 例如：100 表示每秒最多允许 100 次请求
+  int32 qps = 1;
+
+  // 可选：突发流量允许的最大请求数
+  // 例如：150 表示短时间内允许突发到 150 次请求
+  int32 burst = 2;
+
+  // 可选：限流描述
+  string description = 3;
+}

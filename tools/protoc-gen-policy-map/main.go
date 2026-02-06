@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"maps"
+	"path"
+	"sort"
 	"strings"
 
 	"google.golang.org/protobuf/compiler/protogen"
@@ -11,23 +14,53 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
+// packageInfo holds all policy information for a single Go package.
+type packageInfo struct {
+	// The first file we encounter for this package.
+	// Used for naming the output file and package statement.
+	File *protogen.File
+	// Merged policies from all files in this package.
+	Policies map[string]*MethodPolicies
+}
+
 func main() {
 	protogen.Options{}.Run(func(gen *protogen.Plugin) error {
-		// Process each proto file
+		packages := make(map[string]*packageInfo) // Key: GoImportPath
+
+		// Phase 1: Collect and group policies by package from all files.
 		for _, f := range gen.Files {
 			if !f.Generate {
 				continue
 			}
 
-			// Check if this file has any services with policy annotations
+			// Extract policies from the current file.
 			policies := extractPolicies(f, gen)
 			if len(policies) == 0 {
 				continue
 			}
 
-			// Generate the policy map file
-			generatePolicyMapFile(gen, f, policies)
+			// Get or create the package info struct for this file's package.
+			importPath := string(f.GoImportPath)
+			pkgInfo, ok := packages[importPath]
+			if !ok {
+				pkgInfo = &packageInfo{
+					File:     f,
+					Policies: make(map[string]*MethodPolicies),
+				}
+				packages[importPath] = pkgInfo
+			}
+
+			// Merge the policies from this file into the package's policies.
+			maps.Copy(pkgInfo.Policies, policies)
 		}
+
+		// Phase 2: Generate one consolidated policy file per package.
+		for _, pkgInfo := range packages {
+			if len(pkgInfo.Policies) > 0 {
+				generatePolicyMapFile(gen, pkgInfo.File, pkgInfo.Policies)
+			}
+		}
+
 		return nil
 	})
 }
@@ -239,8 +272,10 @@ func extractFieldValue(fd protoreflect.FieldDescriptor, v protoreflect.Value) an
 
 // generatePolicyMapFile generates a .policy.pb.go file with dynamically generated types
 func generatePolicyMapFile(gen *protogen.Plugin, f *protogen.File, policies map[string]*MethodPolicies) {
-	// Create filename: service.policy.pb.go
-	filename := f.GeneratedFilenamePrefix + ".policy.pb.go"
+	// Create a single filename per package, e.g., "service.policy.pb.go"
+	packageDir := path.Dir(f.GeneratedFilenamePrefix)
+	packageName := string(f.GoPackageName)
+	filename := path.Join(packageDir, packageName+".policy.pb.go")
 	g := gen.NewGeneratedFile(filename, f.GoImportPath)
 
 	// Write file header
@@ -263,12 +298,28 @@ func generatePolicyMapFile(gen *protogen.Plugin, f *protogen.File, policies map[
 		}
 	}
 
+	// For deterministic output, sort the type names
+	var sortedTypeNames []string
+	for typeName := range typeFields {
+		sortedTypeNames = append(sortedTypeNames, typeName)
+	}
+	sort.Strings(sortedTypeNames)
+
 	// Generate type definitions
-	for typeName, fields := range typeFields {
+	for _, typeName := range sortedTypeNames {
+		fields := typeFields[typeName]
 		g.P("// ", typeName, " represents the ", typeName, " policy")
 		g.P("type ", typeName, " struct {")
-		for fieldName, fieldType := range fields {
-			// Convert snake_case to PascalCase
+
+		// Sort fields for deterministic output
+		var sortedFieldNames []string
+		for fieldName := range fields {
+			sortedFieldNames = append(sortedFieldNames, fieldName)
+		}
+		sort.Strings(sortedFieldNames)
+
+		for _, fieldName := range sortedFieldNames {
+			fieldType := fields[fieldName]
 			goFieldName := snakeToPascal(fieldName)
 			g.P("\t", goFieldName, " ", fieldType)
 		}
@@ -276,16 +327,11 @@ func generatePolicyMapFile(gen *protogen.Plugin, f *protogen.File, policies map[
 		g.P()
 	}
 
-	// Collect all unique policy type names for MethodPolicies
-	var allPolicyTypes []string
-	for typeName := range typeFields {
-		allPolicyTypes = append(allPolicyTypes, typeName)
-	}
-
 	// Generate MethodPolicies struct
 	g.P("// MethodPolicies contains all policies for a method")
 	g.P("type MethodPolicies struct {")
-	for _, typeName := range allPolicyTypes {
+	// Use the sorted list of type names for deterministic field order
+	for _, typeName := range sortedTypeNames {
 		g.P("\t", typeName, " *", typeName)
 	}
 	g.P("}")
@@ -299,7 +345,8 @@ func generatePolicyMapFile(gen *protogen.Plugin, f *protogen.File, policies map[
 	g.P("\t\treturn nil")
 	g.P("\t}")
 	g.P("\tvar list []any")
-	for _, typeName := range allPolicyTypes {
+	// Use the sorted list for deterministic checks
+	for _, typeName := range sortedTypeNames {
 		g.P("\tif m.", typeName, " != nil {")
 		g.P("\t\tlist = append(list, m.", typeName, ")")
 		g.P("\t}")
@@ -312,12 +359,35 @@ func generatePolicyMapFile(gen *protogen.Plugin, f *protogen.File, policies map[
 	g.P("// PolicyMap maps ConnectRPC procedure paths to their policies")
 	g.P("// All policies are parsed at compile time for type safety and performance")
 	g.P("var PolicyMap = map[string]*MethodPolicies{")
-	for procedure, methodPolicies := range policies {
+
+	// Sort procedures for deterministic map output
+	var sortedProcedures []string
+	for procedure := range policies {
+		sortedProcedures = append(sortedProcedures, procedure)
+	}
+	sort.Strings(sortedProcedures)
+
+	for _, procedure := range sortedProcedures {
+		methodPolicies := policies[procedure]
 		g.P("\t", fmt.Sprintf("%q: {", procedure))
+
+		// Sort rules within a method for deterministic output
+		sort.Slice(methodPolicies.Rules, func(i, j int) bool {
+			return methodPolicies.Rules[i].TypeName < methodPolicies.Rules[j].TypeName
+		})
 
 		for _, rule := range methodPolicies.Rules {
 			g.P("\t\t", rule.TypeName, ": &", rule.TypeName, "{")
-			for fieldName, fieldValue := range rule.Fields {
+
+			// Sort fields within a rule for deterministic output
+			var sortedFieldNames []string
+			for fieldName := range rule.Fields {
+				sortedFieldNames = append(sortedFieldNames, fieldName)
+			}
+			sort.Strings(sortedFieldNames)
+
+			for _, fieldName := range sortedFieldNames {
+				fieldValue := rule.Fields[fieldName]
 				goFieldName := snakeToPascal(fieldName)
 				g.P("\t\t\t", goFieldName, ": ", formatGoValue(fieldValue), ",")
 			}

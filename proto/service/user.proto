@@ -1,12 +1,10 @@
 syntax = "proto3";
 
-package service.user;
+package service;
 
 import "method_options/options.proto";
 import "service/policy/permission.proto";
 import "service/policy/rate_limit.proto";
-
-option go_package = "proto_policy_demo/gen/service/user";
 
 // User message definition
 message User {

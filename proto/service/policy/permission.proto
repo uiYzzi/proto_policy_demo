@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package service.policy;
 
-option go_package = "proto_policy_demo/gen/service/policy";
-
 // Permission 定义鉴权策略
 // 指定访问某个 RPC 方法所需的权限
 message Permission {

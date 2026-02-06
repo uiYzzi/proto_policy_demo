@@ -14,8 +14,8 @@ import (
 	"golang.org/x/net/http2/h2c"
 	"golang.org/x/time/rate"
 
-	userv1 "proto_policy_demo/gen/service/user"
-	"proto_policy_demo/gen/service/user/userconnect"
+	servicev1 "proto_policy_demo/gen/service"
+	"proto_policy_demo/gen/service/serviceconnect"
 	"proto_policy_demo/pkg/policycheck"
 )
 
@@ -25,17 +25,17 @@ type UserServiceHandler struct{}
 // CreateUser implements the CreateUser RPC
 func (s *UserServiceHandler) CreateUser(
 	ctx context.Context,
-	req *connect.Request[userv1.CreateUserRequest],
-) (*connect.Response[userv1.CreateUserResponse], error) {
+	req *connect.Request[servicev1.CreateUserRequest],
+) (*connect.Response[servicev1.CreateUserResponse], error) {
 	log.Printf("CreateUser called: name=%s, email=%s", req.Msg.Name, req.Msg.Email)
 
-	user := &userv1.User{
+	user := &servicev1.User{
 		Id:    "user-123",
 		Name:  req.Msg.Name,
 		Email: req.Msg.Email,
 	}
 
-	return connect.NewResponse(&userv1.CreateUserResponse{
+	return connect.NewResponse(&servicev1.CreateUserResponse{
 		User: user,
 	}), nil
 }
@@ -43,17 +43,17 @@ func (s *UserServiceHandler) CreateUser(
 // GetUser implements the GetUser RPC
 func (s *UserServiceHandler) GetUser(
 	ctx context.Context,
-	req *connect.Request[userv1.GetUserRequest],
-) (*connect.Response[userv1.GetUserResponse], error) {
+	req *connect.Request[servicev1.GetUserRequest],
+) (*connect.Response[servicev1.GetUserResponse], error) {
 	log.Printf("GetUser called: id=%s", req.Msg.Id)
 
-	user := &userv1.User{
+	user := &servicev1.User{
 		Id:    req.Msg.Id,
 		Name:  "John Doe",
 		Email: "john@example.com",
 	}
 
-	return connect.NewResponse(&userv1.GetUserResponse{
+	return connect.NewResponse(&servicev1.GetUserResponse{
 		User: user,
 	}), nil
 }
@@ -100,7 +100,7 @@ func main() {
 
 	// Register Permission policy handler
 	checker.Register("Permission", func(ctx context.Context, policy any, req connect.AnyRequest) error {
-		perm := policy.(*userv1.Permission)
+		perm := policy.(*servicev1.Permission)
 
 		log.Printf("Checking permission for %s: required=%s", req.Spec().Procedure, perm.Required)
 
@@ -130,7 +130,7 @@ func main() {
 
 	// Register RateLimit policy handler
 	checker.Register("RateLimit", func(ctx context.Context, policy any, req connect.AnyRequest) error {
-		limit := policy.(*userv1.RateLimit)
+		limit := policy.(*servicev1.RateLimit)
 
 		log.Printf("Checking rate limit for %s: qps=%d, burst=%d",
 			req.Spec().Procedure, limit.Qps, limit.Burst)
@@ -155,9 +155,9 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Register the UserService with policy checker interceptor
-	path, handler := userconnect.NewUserServiceHandler(
+	path, handler := serviceconnect.NewUserServiceHandler(
 		userHandler,
-		connect.WithInterceptors(checker.CreateInterceptor(userv1.PolicyMap)),
+		connect.WithInterceptors(policycheck.CreateInterceptor(checker, servicev1.PolicyMap)),
 	)
 	mux.Handle(path, handler)
 
@@ -174,14 +174,14 @@ func main() {
 	fmt.Println("Server listening on http://localhost:8080")
 	fmt.Println()
 	fmt.Println("Policies loaded:")
-	for procedure, methodPolicies := range userv1.PolicyMap {
+	for procedure, methodPolicies := range servicev1.PolicyMap {
 		fmt.Printf("  %s:\n", procedure)
 		// Use the PolicyProvider interface to iterate through policies
 		for _, policy := range methodPolicies.GetPolicies() {
 			switch p := policy.(type) {
-			case *userv1.Permission:
+			case *servicev1.Permission:
 				fmt.Printf("    - Permission: %s\n", p.Required)
-			case *userv1.RateLimit:
+			case *servicev1.RateLimit:
 				fmt.Printf("    - Rate Limit: %d QPS (burst: %d)\n", p.Qps, p.Burst)
 			}
 		}

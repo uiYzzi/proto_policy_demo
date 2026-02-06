@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package service.policy;
 
-option go_package = "proto_policy_demo/gen/service/policy";
-
 // RateLimit 定义限流策略
 // 指定某个 RPC 方法的流量限制
 message RateLimit {

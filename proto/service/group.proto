@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package service;
+
+import "method_options/options.proto";
+import "service/policy/permission.proto";
+import "service/policy/rate_limit.proto";
+
+// Group message definition
+message Group {
+  string id = 1;
+  string name = 2;
+  repeated string member_ids = 3;
+}
+
+// CreateGroup request
+message CreateGroupRequest {
+  string name = 1;
+  repeated string member_ids = 2;
+}
+
+// CreateGroup response
+message CreateGroupResponse {
+  Group group = 1;
+}
+
+// GetGroup request
+message GetGroupRequest {
+  string id = 1;
+}
+
+// GetGroup response
+message GetGroupResponse {
+  Group group = 1;
+}
+
+// GroupService provides group management operations
+service GroupService {
+  // CreateGroup creates a new group (requires group:write permission and rate limit of 50 QPS)
+  rpc CreateGroup(CreateGroupRequest) returns (CreateGroupResponse) {
+    option (method_options.policy) = {
+      rules: [
+        {
+          [type.googleapis.com/service.policy.Permission]: {
+            required: "group:write"
+            description: "Requires write permission to create groups"
+          }
+        },
+        {
+          [type.googleapis.com/service.policy.RateLimit]: {
+            qps: 50
+            burst: 100
+            description: "Rate limit to prevent abuse"
+          }
+        }
+      ]
+    };
+  }
+
+  // GetGroup retrieves group information (requires group:read permission)
+  rpc GetGroup(GetGroupRequest) returns (GetGroupResponse) {
+    option (method_options.policy) = {
+      rules: [
+        {
+          [type.googleapis.com/service.policy.Permission]: {
+            required: "group:read"
+            description: "Requires read permission to view group data"
+          }
+        },
+        {
+          [type.googleapis.com/service.policy.RateLimit]: {
+            qps: 200
+            burst: 500
+            description: "Higher rate limit for read operations"
+          }
+        }
+      ]
+    };
+  }
+}

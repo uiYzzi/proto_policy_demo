@@ -10,15 +10,6 @@ import (
 	"connectrpc.com/connect"
 )
 
-// PolicyProvider is an interface that all generated policy structures must implement.
-// It allows the checker to access policies without using reflection.
-type PolicyProvider interface {
-	// GetPolicies returns all policy instances contained in this provider.
-	// Each policy is returned as an interface{} and should be type-asserted
-	// by the corresponding policy handler.
-	GetPolicies() []any
-}
-
 // Handler is a function that checks a specific policy type.
 // It receives the policy data as any and should perform type assertion
 // to convert it to the actual policy type defined in the service's proto.
@@ -59,24 +50,11 @@ func (c *Checker) Register(typeName string, handler Handler) {
 }
 
 // Check executes all registered handlers for the given policies.
-// It calls the PolicyProvider.GetPolicies() method to retrieve all policies
+// It calls the provider's GetPolicies() method to retrieve all policies
 // and then invokes the corresponding handler for each policy based on its type.
 //
-// The policies parameter must implement the PolicyProvider interface.
-//
-// Returns the first error encountered, or nil if all checks pass.
-func (c *Checker) Check(ctx context.Context, policies any, req connect.AnyRequest) error {
-	if policies == nil {
-		return nil
-	}
-
-	// Check if policies implements PolicyProvider interface
-	provider, ok := policies.(PolicyProvider)
-	if !ok {
-		return fmt.Errorf("policies must implement PolicyProvider interface, got %T", policies)
-	}
-
-	// Get all policies from the provider (no reflection needed!)
+// The provider parameter must implement GetPolicies() []any.
+func Check[M interface{ GetPolicies() []any }](handlers map[string]Handler, ctx context.Context, provider M, req connect.AnyRequest) error {
 	policyList := provider.GetPolicies()
 
 	// Iterate through each policy
@@ -85,16 +63,15 @@ func (c *Checker) Check(ctx context.Context, policies any, req connect.AnyReques
 			continue
 		}
 
-		// Get the type name using simple type switching
-		typeName := c.getPolicyTypeName(policy)
+		// Get the type name
+		typeName := getPolicyTypeName(policy)
 		if typeName == "" {
 			continue
 		}
 
 		// Look up the handler
-		handler, exists := c.handlers[typeName]
+		handler, exists := handlers[typeName]
 		if !exists {
-			// No handler registered for this policy type, skip
 			continue
 		}
 
@@ -107,28 +84,16 @@ func (c *Checker) Check(ctx context.Context, policies any, req connect.AnyReques
 	return nil
 }
 
-// getPolicyTypeName extracts the type name from a policy instance.
-// This uses a simple type assertion approach rather than reflection.
-// The policy types are expected to be concrete struct pointers.
-func (c *Checker) getPolicyTypeName(policy any) string {
-	// We use fmt.Sprintf with %T to get the type name, then extract the actual name
-	// This is still technically using some reflection under the hood, but it's much lighter
-	// than the previous field iteration approach.
+func getPolicyTypeName(policy any) string {
 	typeName := fmt.Sprintf("%T", policy)
-
-	// Remove the pointer prefix and package path
-	// e.g., "*user.Permission" -> "Permission"
 	if len(typeName) > 0 && typeName[0] == '*' {
 		typeName = typeName[1:]
 	}
-
-	// Find the last dot and take everything after it
 	for i := len(typeName) - 1; i >= 0; i-- {
 		if typeName[i] == '.' {
 			return typeName[i+1:]
 		}
 	}
-
 	return typeName
 }
 
@@ -144,26 +109,29 @@ func (c *Checker) getPolicyTypeName(policy any) string {
 //	checker.Register("Permission", permissionHandler)
 //	checker.Register("RateLimit", rateLimitHandler)
 //
-//	interceptor := checker.CreateInterceptor(userv1.PolicyMap)
+//	interceptor := policycheck.CreateInterceptor(checker, userv1.PolicyMap)
 //
 //	path, handler := userconnect.NewUserServiceHandler(
 //	    userHandler,
 //	    connect.WithInterceptors(interceptor),
 //	)
-func (c *Checker) CreateInterceptor(policyMap any) connect.UnaryInterceptorFunc {
+//
+// Note: This function uses generics with interface constraint to ensure type safety.
+// The generic parameter M must implement GetPolicies() []any, which is satisfied by
+// generated MethodPolicies struct pointers.
+func CreateInterceptor[M interface{ GetPolicies() []any }](c *Checker, policyMap map[string]M) connect.UnaryInterceptorFunc {
 	return func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 			procedure := req.Spec().Procedure
 
 			// Look up policies for this procedure
-			policies := c.lookupPolicies(policyMap, procedure)
-			if policies == nil {
-				// No policies for this endpoint, proceed
+			provider, exists := policyMap[procedure]
+			if !exists {
 				return next(ctx, req)
 			}
 
 			// Check all policies
-			if err := c.Check(ctx, policies, req); err != nil {
+			if err := Check(c.handlers, ctx, provider, req); err != nil {
 				return nil, err
 			}
 
@@ -171,27 +139,4 @@ func (c *Checker) CreateInterceptor(policyMap any) connect.UnaryInterceptorFunc 
 			return next(ctx, req)
 		}
 	}
-}
-
-// lookupPolicies looks up policies from the policy map.
-// The policyMap should be a map[string]PolicyProvider.
-func (c *Checker) lookupPolicies(policyMap any, procedure string) any {
-	if policyMap == nil {
-		return nil
-	}
-
-	// Type assert to the expected map type
-	// The generated PolicyMap is map[string]PolicyProvider
-	providerMap, ok := policyMap.(map[string]PolicyProvider)
-	if !ok {
-		return nil
-	}
-
-	// Look up the procedure in the map
-	provider, exists := providerMap[procedure]
-	if !exists {
-		return nil
-	}
-
-	return provider
 }
